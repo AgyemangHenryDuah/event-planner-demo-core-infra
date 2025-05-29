@@ -1,0 +1,186 @@
+# "org" ensures this Service is used with the correct Serverless Framework Access Key.
+org: dhokabeatz
+# "app" enables Serverless Framework Dashboard features and sharing them with other Services.
+app: event-planner
+# "service" is the name of this project. This will also be added to your AWS resource names.
+service: event-planner-core-infra
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: eu-central-1
+  stage: ${opt:stage, 'dev'}
+  environment:
+    DB_HOST: !GetAtt RDSDatabase.Endpoint.Address
+    DB_USERNAME: ${env:DB_USERNAME}
+    DB_PASSWORD: ${env:DB_PASSWORD}
+    S3_BUCKET: !Ref S3Bucket
+    SNS_TOPIC_ARN: !Ref NotificationTopic
+    COGNITO_USERPOOL_ARN: !GetAtt CognitoUserPool.Arn
+    COGNITO_USERPOOL_ID: !Ref CognitoUserPool
+resources:
+  Resources:
+    VPC:
+      Type: AWS::EC@::VPC
+      Properties:
+        CidrBlock: 10.0.0.0/16
+        EnableDnsSupport: true
+        EnableDnsHostnames: true
+        
+    SubnetA:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: 10.0.1.0/24
+        AvailabilityZone: eu-central-1a
+    
+    SubnetB:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: 10.0.2.0/24
+        AvailabilityZone: eu-central-1b
+    
+    RDSSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: RDS Security Group
+        VpcId: !Ref VPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 5432
+            ToPort: 5432
+            CidrIp: 10.0.0/16
+    
+    RDSSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: RDS Subnet Group
+        SubnetIds:
+          - !Ref SubnetA
+          - !Ref SubnetB
+    
+    RDSDatabase:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        DBInstanceIdentifier: event-planner-db-${self.provider.stage}
+        Engine: postgres
+        EngineVersion: 15.4
+        DBInstanceClass: db.t3.micro
+        AllocatedStorage: 20
+        MasterUsername: ${env.DB_USERNAME}
+        MasterUserPassword: ${env.DB_PASSWORD}
+        VPCSecurityGroups:
+          - !Ref RDSSecurityGroup
+        DBSubnetGroupName: !Ref RDSSubnetGroup
+        PubliclyAccessible: false
+    
+
+    CognitoUserPool:
+      Type: AWS::Cognito::Userpool
+      Properties:
+        UserpoolName: event-planner-userpool-${self.provider.stage}
+        UsernameAttributes:
+          - email
+        AutoVerifiedAttributes:
+          - email
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireLowercase: true
+            RequireNumbers: true
+            RequireSymbols: true
+            RequireUppercase: true
+        Schema:
+          - Name: email
+            AttributeDataType: String
+            Required: true
+          - Name: name
+            AttributeDataType: String
+            Required: true
+          - Name: custom:organization
+            AttributeDataType: String
+    
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: event-planner-client-${self.provider.stage}
+        UserPoolId: !Ref CognitoUserPool
+        ExplicitAuthFlows:
+          - USER_PASSWORD_AUTH
+        GenerateSecret: false
+    
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+       BucketName: event-planner-files-${self.provider.stage}
+       CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
+            AllowedOrigins:
+              - "*"
+    
+    NotificationTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: event-planner-notification-${self.provider.stage}
+        DisplayName: Event Planner Notification Topic
+    
+
+    CloudWatchLogGroup:
+      Type: AWS::Log::LogGroup
+      Properties:
+        LogGroupName: event-planner-loggroup-${self.provider.stage}
+        RetentionInDays: 14
+  
+  Outputs:
+    VPCId:
+      Value: !Ref VPC
+      Export:
+        Name: VPCId-${self.provider.stage}
+    
+    SubnetAId:
+      Value: !Ref SubnetA
+      Export:
+        Name: SubnetAId-${self.provider.stage}
+    
+    SubnetBId:
+      Value: !Ref SubnetB
+      Export:
+        Name: SubnetBId-${self.provider.stage}
+    
+    RDSSecurityGroupId:
+      Value: !Ref  RDSSecurityGroup
+      Export:
+        Name: RDSSecurityGroupId-${self.provider.stage}
+    
+    RDSHost:
+      Value: !GetAtt RDSDatabase.Endpoint.Address
+      Export:
+        Name: RDSHost-${self.provider.stage}
+    
+    CognitoUserPoolArn:
+      Value: !GetAtt CognitoUserPool.Arn
+      Export:
+        Name: CognitoUserPoolArn-${self.provider.stage}
+    
+    CognitoUserPoolClientId:
+      Value: !Ref CognitoUserPoolClient
+      Export:
+        Name: CognitoUserPoolClientId-${self.provider.stage}
+    
+    S3BucketName:
+      Value: !Ref S3Bucket
+      Export:
+        Name: S3BucketName-${self.provider.stage}
+    
+    NotificationArn:
+      Value: !Ref NotificationTopic
+      Export:
+        Name: NotificationArn-${self.provider.stage}
+    
